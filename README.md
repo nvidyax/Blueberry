@@ -50,4 +50,4 @@ To run the server instance locally over `stdio`:
 go run ./cmd/blueberry/main.go -transport stdio
 ```
 
-_Note: This tool is heavily inspired by hallucination-detection and verification tracing patterns (e.g. `berry` and `hallbayes`) to strictly reduce AI drift._
+_Beep Boop_
