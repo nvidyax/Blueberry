@@ -97,3 +97,23 @@ func (s *LocalStore) AddSpan(run *domain.RunState, text, source string, meta map
 	s.persist(run)
 	return &rec
 }
+
+func (s *LocalStore) AddAttempt(run *domain.RunState, claimID, hypothesis string, budgetMinutes float64) *domain.AttemptRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	aid := fmt.Sprintf("A%d", run.NextAttemptIdx)
+	run.NextAttemptIdx++
+
+	rec := domain.AttemptRecord{
+		AttemptID:     aid,
+		ClaimID:       claimID,
+		Hypothesis:    hypothesis,
+		BudgetMinutes: budgetMinutes,
+		CreatedAt:     float64(time.Now().UnixNano()) / 1e9,
+	}
+
+	run.Attempts = append(run.Attempts, rec)
+	s.persist(run)
+	return &rec
+}

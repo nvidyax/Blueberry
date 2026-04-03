@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/blueberry/mcp/internal/verifier"
 )
@@ -44,16 +46,22 @@ func (o *OpenAIBackend) Verify(ctx context.Context, answer string, steps []verif
 		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
 	}
 
+	var evidenceText strings.Builder
+	for _, sp := range spans {
+		evidenceText.WriteString(fmt.Sprintf("[%s] %s\n", sp["SID"], sp["Text"]))
+	}
+	evidence := strings.TrimSpace(evidenceText.String())
+
 	results := make([]verifier.TraceResult, len(steps))
 
 	for i, st := range steps {
-		conf, err := o.callOpenAI(ctx, st.Claim)
+		conf, err := o.callOpenAI(ctx, st.Claim, evidence)
 		if err != nil {
 			return nil, fmt.Errorf("openai error on step %d: %w", i, err)
 		}
 
 		flagged := conf < st.Confidence
-		if len(st.Cites) == 0 {
+		if len(st.Cites) == 0 && evidence != "" {
 			flagged = true
 		}
 
@@ -69,8 +77,13 @@ func (o *OpenAIBackend) Verify(ctx context.Context, answer string, steps []verif
 	return results, nil
 }
 
-func (o *OpenAIBackend) callOpenAI(ctx context.Context, claim string) (float64, error) {
-	prompt := fmt.Sprintf("Is the following claim supported by the text? Answer only 'Yes' or 'No'. Claim: %s", claim)
+func (o *OpenAIBackend) callOpenAI(ctx context.Context, claim string, evidence string) (float64, error) {
+	var prompt string
+	if evidence != "" {
+		prompt = fmt.Sprintf("Evidence:\n%s\n\nIs the following claim strictly supported by the evidence? Answer only 'Yes' or 'No'. Claim: %s", evidence, claim)
+	} else {
+		prompt = fmt.Sprintf("Is the following claim supported by general knowledge? Answer only 'Yes' or 'No'. Claim: %s", claim)
+	}
 
 	payload := map[string]interface{}{
 		"model": o.Model,
@@ -131,8 +144,8 @@ func (o *OpenAIBackend) callOpenAI(ctx context.Context, claim string) (float64, 
 
 	prob := 0.99
 	if len(res.Choices[0].Logprobs.Content) > 0 {
-		_ = res.Choices[0].Logprobs.Content[0].Logprob
-		// prob = math.Exp(lp)
+		lp := res.Choices[0].Logprobs.Content[0].Logprob
+		prob = math.Exp(lp)
 	}
 
 	return prob, nil

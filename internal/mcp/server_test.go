@@ -12,16 +12,10 @@ func TestServerWrapper_LoadRunMissing(t *testing.T) {
 	appStore := store.NewLocalStore()
 	sw := NewServerWrapper(appStore)
 
-	req := mcp.CallToolRequest{
-		Params: struct {
-			Name      string                 `json:"name"`
-			Arguments map[string]interface{} `json:"arguments,omitempty"`
-		}{
-			Name: "load_run",
-			Arguments: map[string]interface{}{
-				"run_id": "MISSING_R123",
-			},
-		},
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "load_run"
+	req.Params.Arguments = map[string]interface{}{
+		"run_id": "MISSING_R123",
 	}
 
 	res, err := sw.handleLoadRun(context.Background(), req)
@@ -39,17 +33,11 @@ func TestServerWrapper_IntegrationWorkflow(t *testing.T) {
 	sw := NewServerWrapper(appStore)
 
 	ctx := context.Background()
-	reqStart := mcp.CallToolRequest{
-		Params: struct {
-			Name      string                 `json:"name"`
-			Arguments map[string]interface{} `json:"arguments,omitempty"`
-		}{
-			Name: "start_run",
-			Arguments: map[string]interface{}{
-				"problem_statement": "Hello", 
-				"deliverable": "World",
-			},
-		},
+	reqStart := mcp.CallToolRequest{}
+	reqStart.Params.Name = "start_run"
+	reqStart.Params.Arguments = map[string]interface{}{
+		"problem_statement": "Hello", 
+		"deliverable": "World",
 	}
 	res, err := sw.handleStartRun(ctx, reqStart)
 	if err != nil || res.IsError {
@@ -60,3 +48,30 @@ func TestServerWrapper_IntegrationWorkflow(t *testing.T) {
 		t.Error("expected response content")
 	}
 }
+
+func TestServerWrapper_AddAttempt_Integration(t *testing.T) {
+	appStore := store.NewLocalStore()
+	sw := NewServerWrapper(appStore)
+
+	ctx := context.Background()
+	sw.appStore.StartRun("R_TEST")
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "add_attempt"
+	req.Params.Arguments = map[string]interface{}{
+		"run_id": "R_TEST",
+		"claim_id": "C1",
+		"hypothesis": "I think so",
+		"budget_minutes": float64(5.0),
+	}
+
+	res, err := sw.handleAddAttempt(ctx, req)
+	if err != nil || res.IsError {
+		t.Fatalf("failed add attempt")
+	}
+
+	if len(res.Content) == 0 {
+		t.Error("expected response content")
+	}
+}
+

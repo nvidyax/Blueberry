@@ -66,8 +66,33 @@ func (sw *ServerWrapper) registerTools() {
 	detectHallucinationTool := mcp.NewTool("detect_hallucination",
 		mcp.WithDescription("Information-budget diagnostic per claim."),
 		mcp.WithString("answer", mcp.Required(), mcp.Description("Answer to verify")),
+		mcp.WithString("run_id", mcp.Description("Run ID to verify against context")),
 	)
 	sw.s.AddTool(detectHallucinationTool, sw.handleDetectHallucination)
+
+	// get_run_status
+	getRunStatusTool := mcp.NewTool("get_run_status",
+		mcp.WithDescription("Get the current state of a run."),
+		mcp.WithString("run_id", mcp.Description("Run ID")),
+	)
+	sw.s.AddTool(getRunStatusTool, sw.handleGetRunStatus)
+
+	// list_spans
+	listSpansTool := mcp.NewTool("list_spans",
+		mcp.WithDescription("List all evidence spans for a run."),
+		mcp.WithString("run_id", mcp.Description("Run ID")),
+	)
+	sw.s.AddTool(listSpansTool, sw.handleListSpans)
+
+	// add_attempt
+	addAttemptTool := mcp.NewTool("add_attempt",
+		mcp.WithDescription("Log an attempt or hypothesis to a run."),
+		mcp.WithString("run_id", mcp.Description("Run ID")),
+		mcp.WithString("claim_id", mcp.Required(), mcp.Description("Claim ID")),
+		mcp.WithString("hypothesis", mcp.Required(), mcp.Description("Hypothesis text")),
+		mcp.WithNumber("budget_minutes", mcp.Description("Budget minutes")),
+	)
+	sw.s.AddTool(addAttemptTool, sw.handleAddAttempt)
 }
 
 func (sw *ServerWrapper) handleStartRun(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -127,12 +152,21 @@ func (sw *ServerWrapper) handleAddSpan(ctx context.Context, req mcp.CallToolRequ
 
 func (sw *ServerWrapper) handleDetectHallucination(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	answer, _ := req.Params.Arguments["answer"].(string)
+	runID, _ := req.Params.Arguments["run_id"].(string)
 	
 	backendType := os.Getenv("BERRY_VERIFIER_BACKEND")
 	var backend verifier.Backend
 
 	if backendType == "anthropic" {
 		backend = backends.NewAnthropicBackend("")
+	} else if backendType == "gemini" {
+		backend = backends.NewGeminiBackend("")
+	} else if backendType == "bedrock" {
+		var err error
+		backend, err = backends.NewBedrockBackend("")
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to init bedrock: %v", err)), nil
+		}
 	} else {
 		backend = backends.NewOpenAIBackend("")
 	}
@@ -141,12 +175,27 @@ func (sw *ServerWrapper) handleDetectHallucination(ctx context.Context, req mcp.
 		{
 			Idx:        0,
 			Claim:      answer,
-			Cites:      []string{"S0"},
+			Cites:      []string{"S0"}, // Can be improved in future to parse cites
 			Confidence: 0.95,
 		},
 	}
 
-	res, err := backend.Verify(ctx, answer, steps, nil)
+	var spans []map[string]string
+	run, err := sw.appStore.GetRun(runID)
+	if err == nil {
+		for _, sid := range run.SpanOrder {
+			if spanRec, ok := run.Spans[sid]; ok {
+				spans = append(spans, map[string]string{
+					"SID":  spanRec.SID,
+					"Text": spanRec.Text,
+				})
+			}
+		}
+	} else if runID != "" {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get run: %v", err)), nil
+	}
+
+	res, err := backend.Verify(ctx, answer, steps, spans)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("verification failed: %v", err)), nil
 	}
@@ -156,5 +205,65 @@ func (sw *ServerWrapper) handleDetectHallucination(ctx context.Context, req mcp.
 		"details": res,
 	})
 
+	return mcp.NewToolResultText(string(b)), nil
+}
+
+func (sw *ServerWrapper) handleGetRunStatus(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	runID, _ := req.Params.Arguments["run_id"].(string)
+	run, err := sw.appStore.GetRun(runID)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	b, _ := json.Marshal(map[string]any{
+		"run_id":           run.RunID,
+		"created_at":       run.CreatedAt,
+		"next_span_idx":    run.NextSpanIdx,
+		"next_attempt_idx": run.NextAttemptIdx,
+		"span_count":       len(run.SpanOrder),
+		"attempt_count":    len(run.Attempts),
+	})
+	return mcp.NewToolResultText(string(b)), nil
+}
+
+func (sw *ServerWrapper) handleListSpans(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	runID, _ := req.Params.Arguments["run_id"].(string)
+	run, err := sw.appStore.GetRun(runID)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	spans := make([]map[string]interface{}, 0)
+	for _, sid := range run.SpanOrder {
+		if sp, ok := run.Spans[sid]; ok {
+			spans = append(spans, map[string]interface{}{
+				"sid":    sp.SID,
+				"source": sp.Source,
+				"chars":  len(sp.Text),
+				"text":   sp.Text,
+			})
+		}
+	}
+
+	b, _ := json.Marshal(spans)
+	return mcp.NewToolResultText(string(b)), nil
+}
+
+func (sw *ServerWrapper) handleAddAttempt(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	runID, _ := req.Params.Arguments["run_id"].(string)
+	claimID, _ := req.Params.Arguments["claim_id"].(string)
+	hypothesis, _ := req.Params.Arguments["hypothesis"].(string)
+	budgetVal, ok := req.Params.Arguments["budget_minutes"].(float64)
+	if !ok {
+		budgetVal = 10.0 // Default 10 mins
+	}
+
+	run, err := sw.appStore.GetRun(runID)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	att := sw.appStore.AddAttempt(run, claimID, hypothesis, budgetVal)
+	b, _ := json.Marshal(att)
 	return mcp.NewToolResultText(string(b)), nil
 }
