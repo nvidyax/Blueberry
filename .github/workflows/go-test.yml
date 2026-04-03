@@ -18,16 +18,13 @@ jobs:
         go-version: '1.23.0'
 
     - name: Download Go modules
-      working-directory: ./blueberry
       run: go mod download
 
     - name: Run golangci-lint
       uses: golangci/golangci-lint-action@v6
       with:
         version: latest
-        working-directory: ./blueberry
         args: --timeout=5m
 
     - name: Run test suite
-      working-directory: ./blueberry
       run: go test -v -race ./...
