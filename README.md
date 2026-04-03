@@ -17,24 +17,24 @@ The following diagram maps out how Blueberry leverages the MCP structure to prop
 
 ```mermaid
 graph TD
-    Client["MCP Client"] <-->|"stdio"| Server("Blueberry MCP Server")
+    Client[MCP Client] <-->|stdio| Server(Blueberry MCP Server)
     
-    Server -->|"Read/Write"| Store["Local Store Layer"]
-    Store -->|"Persists"| Disk[("Local Disk run.json")]
+    Server -->|Read/Write| Store[Local Store Layer]
+    Store -->|Persists| Disk[(Local Disk run.json)]
     
-    Server -->|"Validates Evidence"| Verifier["Verifier Engine"]
-    Verifier -->|"Anthropic Backend"| Anthropic["Claude API"]
-    Verifier -->|"OpenAI Backend"| OpenAI["OpenAI API"]
-    Verifier -->|"Gemini Backend"| Gemini["Google Gemini API"]
-    Verifier -->|"Bedrock Backend"| Bedrock["AWS Bedrock"]
+    Server -->|Validates Evidence| Verifier[Verifier Engine]
+    Verifier -->|Anthropic Backend| Anthropic[Claude API]
+    Verifier -->|OpenAI Backend| OpenAI[OpenAI API]
+    Verifier -->|Gemini Backend| Gemini[Google Gemini API]
+    Verifier -->|Bedrock Backend| Bedrock[AWS Bedrock]
     
     subgraph Domain State
-        Run("Run State")
-        Run --> Spans("Spans / Evidence")
-        Run --> Attempts("Attempts / Claims")
+        Run(Run State)
+        Run --> Spans(Spans / Evidence)
+        Run --> Attempts(Attempts / Claims)
     end
     
-    Store -.->|"Manages"| Domain State
+    Store -.->|Manages| Domain State
 ```
 
 ## Supported Verification Backends
