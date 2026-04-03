@@ -27,6 +27,8 @@ graph TD
     Verifier -->|OpenAI Backend| OpenAI[OpenAI API]
     Verifier -->|Gemini Backend| Gemini[Google Gemini API]
     Verifier -->|Bedrock Backend| Bedrock[AWS Bedrock]
+    Verifier -->|Azure Backend| Azure[Azure OpenAI API]
+    Verifier -->|Vertex Backend| Vertex[Google Vertex AI]
     
     subgraph Domain State
         Run(Run State)
@@ -56,6 +58,14 @@ You can define which foundational model verifies your AI's tracing logs by setti
 4. **AWS Bedrock** (`BERRY_VERIFIER_BACKEND=bedrock`)
    - Uses AWS SDK v2 orchestration with SigV4 API compliance handling for enterprise clouds.
    - Env Defaults: Relies on localized AWS credentials profile. Default model acts as Claude Haiku wrapper.
+
+5. **Azure OpenAI** (`BERRY_VERIFIER_BACKEND=azure`)
+   - Fully mimics OpenAI logic grading utilizing dedicated enterprise endpoints.
+   - Env Defaults: `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, default model `gpt-4`.
+
+6. **Google Vertex AI** (`BERRY_VERIFIER_BACKEND=vertex`)
+   - Enterprise equivalent to Google Gemini utilizing Google Cloud's official `genai` SDK and service-account OAuth handshakes.
+   - Env Defaults: `VERTEX_PROJECT_ID`, default location `us-central1`, default model `gemini-1.5-flash-001`.
 
 ## Available Tools
 

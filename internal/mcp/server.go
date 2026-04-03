@@ -167,6 +167,14 @@ func (sw *ServerWrapper) handleDetectHallucination(ctx context.Context, req mcp.
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to init bedrock: %v", err)), nil
 		}
+	} else if backendType == "azure" {
+		backend = backends.NewAzureBackend("")
+	} else if backendType == "vertex" {
+		var err error
+		backend, err = backends.NewVertexBackend("")
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to init vertex: %v", err)), nil
+		}
 	} else {
 		backend = backends.NewOpenAIBackend("")
 	}
