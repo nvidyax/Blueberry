@@ -149,3 +149,16 @@ func (b *BedrockBackend) callBedrockHeuristic(ctx context.Context, claim string,
 
 	return score, nil
 }
+
+func (b *BedrockBackend) GetEmbeddings(ctx context.Context, text []string) ([][]float64, error) {
+	return nil, fmt.Errorf("GetEmbeddings not implemented natively for bedrock via this interface")
+}
+
+func (b *BedrockBackend) ParseAtomicClaims(ctx context.Context, text string) ([]string, error) {
+	return strings.Split(text, ". "), nil
+}
+
+func (b *BedrockBackend) EvaluateNLI(ctx context.Context, contextText string, claim string) (string, float64, error) {
+	return "Neutral", 0.5, fmt.Errorf("EvaluateNLI not implemented for bedrock")
+}
+

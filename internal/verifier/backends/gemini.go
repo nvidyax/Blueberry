@@ -155,3 +155,16 @@ func (g *GeminiBackend) callGeminiHeuristic(ctx context.Context, claim string, e
 
 	return score, nil
 }
+
+func (g *GeminiBackend) GetEmbeddings(ctx context.Context, text []string) ([][]float64, error) {
+	return nil, fmt.Errorf("GetEmbeddings not implemented natively for gemini via this interface")
+}
+
+func (g *GeminiBackend) ParseAtomicClaims(ctx context.Context, text string) ([]string, error) {
+	return strings.Split(text, ". "), nil
+}
+
+func (g *GeminiBackend) EvaluateNLI(ctx context.Context, contextText string, claim string) (string, float64, error) {
+	return "Neutral", 0.5, fmt.Errorf("EvaluateNLI not implemented for gemini")
+}
+

@@ -143,3 +143,17 @@ func (a *AnthropicBackend) callAnthropicHeuristic(ctx context.Context, claim str
 
 	return score, nil
 }
+
+func (a *AnthropicBackend) GetEmbeddings(ctx context.Context, text []string) ([][]float64, error) {
+	return nil, fmt.Errorf("GetEmbeddings not implemented natively for anthropic via this interface")
+}
+
+func (a *AnthropicBackend) ParseAtomicClaims(ctx context.Context, text string) ([]string, error) {
+	// Simplified parsing, could use heuristic prompt
+	return strings.Split(text, ". "), nil
+}
+
+func (a *AnthropicBackend) EvaluateNLI(ctx context.Context, contextText string, claim string) (string, float64, error) {
+	return "Neutral", 0.5, fmt.Errorf("EvaluateNLI not implemented for anthropic")
+}
+

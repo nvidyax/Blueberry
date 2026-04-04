@@ -75,3 +75,21 @@ func TestServerWrapper_AddAttempt_Integration(t *testing.T) {
 	}
 }
 
+func TestServerWrapper_SplitClaims(t *testing.T) {
+	appStore := store.NewLocalStore()
+	sw := NewServerWrapper(appStore)
+
+	ctx := context.Background()
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "split_claims"
+	req.Params.Arguments = map[string]interface{}{
+		"text": "The sky is blue. Grass is green.",
+	}
+
+	// This will likely return an error string in result if no API key is set, which is fine to test wiring
+	res, _ := sw.handleSplitClaims(ctx, req)
+
+	if res.IsError == false && len(res.Content) == 0 {
+		t.Errorf("expected either an error from backend or some content")
+	}
+}

@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"cloud.google.com/go/vertexai/genai"
+	"google.golang.org/genai"
 	"github.com/blueberry/mcp/internal/verifier"
 )
 
@@ -29,7 +29,11 @@ func NewVertexBackend(model string) (*VertexBackend, error) {
 		location = "us-central1"
 	}
 
-	client, err := genai.NewClient(context.Background(), projectID, location)
+	client, err := genai.NewClient(context.Background(), &genai.ClientConfig{
+		Project:  projectID,
+		Location: location,
+		Backend:  genai.BackendVertexAI,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Vertex client: %v", err)
 	}
@@ -91,27 +95,19 @@ func (v *VertexBackend) callVertexHeuristic(ctx context.Context, claim string, e
 		prompt = fmt.Sprintf("Is the following claim supported by general knowledge? Claim: %s\nOutput ONLY a float between 0.00 and 1.00 indicating your confidence.", claim)
 	}
 
-	model := v.client.GenerativeModel(v.Model)
-	
-	temp := float32(0.0)
-	model.SetTemperature(temp)
+	var temp float32 = 0.0
+	config := &genai.GenerateContentConfig{
+		Temperature: &temp,
+	}
 
-	resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+	resp, err := v.client.Models.GenerateContent(ctx, v.Model, genai.Text(prompt), config)
 	if err != nil {
 		return 0, err
 	}
 
-	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-		return 0, fmt.Errorf("no content returned from Vertex")
-	}
-
-	part := resp.Candidates[0].Content.Parts[0]
-	textResp := ""
-	switch p := part.(type) {
-	case genai.Text:
-		textResp = string(p)
-	default:
-		textResp = fmt.Sprintf("%v", p)
+	textResp := resp.Text()
+	if textResp == "" {
+		return 0, fmt.Errorf("no valid text returned from Vertex")
 	}
 
 	textResp = strings.TrimSpace(textResp)
@@ -129,3 +125,16 @@ func (v *VertexBackend) callVertexHeuristic(ctx context.Context, claim string, e
 
 	return score, nil
 }
+
+func (v *VertexBackend) GetEmbeddings(ctx context.Context, text []string) ([][]float64, error) {
+	return nil, fmt.Errorf("GetEmbeddings not implemented natively for vertex via this interface")
+}
+
+func (v *VertexBackend) ParseAtomicClaims(ctx context.Context, text string) ([]string, error) {
+	return strings.Split(text, ". "), nil
+}
+
+func (v *VertexBackend) EvaluateNLI(ctx context.Context, contextText string, claim string) (string, float64, error) {
+	return "Neutral", 0.5, fmt.Errorf("EvaluateNLI not implemented for vertex")
+}
+

@@ -29,15 +29,23 @@ type SpanRecord struct {
 }
 
 type AttemptRecord struct {
-	AttemptID     string   `json:"attempt_id"`
-	CreatedAt     float64  `json:"created_at"`
-	ClaimID       string   `json:"claim_id"`
-	Hypothesis    string   `json:"hypothesis"`
-	Action        string   `json:"action"`
-	BudgetMinutes float64  `json:"budget_minutes"`
-	InputSIDs     []string `json:"input_sids"`
-	OutputSIDs    []string `json:"output_sids"`
-	AuditStatus   string   `json:"audit_status"`
-	Decision      string   `json:"decision"`
-	NextStep      string   `json:"next_step"`
+	AttemptID     string     `json:"attempt_id"`
+	CreatedAt     float64    `json:"created_at"`
+	ClaimID       string     `json:"claim_id"`
+	Hypothesis    string     `json:"hypothesis"`
+	AtomicClaims  []string   `json:"atomic_claims,omitempty"`
+	Action        string     `json:"action"`
+	BudgetMinutes float64    `json:"budget_minutes"`
+	InputSIDs     []string   `json:"input_sids"`
+	OutputSIDs    []string   `json:"output_sids"`
+	AuditStatus   string     `json:"audit_status"`
+	Decision      string     `json:"decision"`
+	NextStep      string     `json:"next_step"`
+	RAGTriad      *RAGTriad  `json:"rag_triad,omitempty"`
+}
+
+type RAGTriad struct {
+	ContextRelevance float64 `json:"context_relevance"`
+	Faithfulness     float64 `json:"faithfulness"`
+	AnswerRelevance  float64 `json:"answer_relevance"`
 }

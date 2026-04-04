@@ -9,6 +9,7 @@ type Step struct {
 	Claim      string   `json:"claim"`
 	Cites      []string `json:"cites"`
 	Confidence float64  `json:"confidence"`
+	Enrich     bool     `json:"enrich,omitempty"`
 }
 
 type TraceResult struct {
@@ -24,10 +25,18 @@ type TraceResult struct {
 	BudgetGapMin     float64  `json:"budget_gap_min"`
 	BudgetGapMax     float64  `json:"budget_gap_max"`
 	ConfidenceScore  float64  `json:"confidence_score"`
+	Reason           string   `json:"reason,omitempty"`
+	CorrectedClaim   string   `json:"corrected_claim,omitempty"`
 }
 
 type Backend interface {
 	Name() string
 	// Verify measures the evidence budget or confidence of steps
 	Verify(ctx context.Context, answer string, steps []Step, spans []map[string]string) ([]TraceResult, error)
+	// GetEmbeddings returns vectors for text
+	GetEmbeddings(ctx context.Context, text []string) ([][]float64, error)
+	// ParseAtomicClaims splits text into isolated claims
+	ParseAtomicClaims(ctx context.Context, text string) ([]string, error)
+	// EvaluateNLI returns Entailment, Neutral, or Contradiction and a confidence score
+	EvaluateNLI(ctx context.Context, contextText string, claim string) (string, float64, error)
 }

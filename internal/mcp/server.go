@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/blueberry/mcp/internal/store"
 	"github.com/blueberry/mcp/internal/verifier"
@@ -64,9 +65,12 @@ func (sw *ServerWrapper) registerTools() {
 
 	// detect_hallucination
 	detectHallucinationTool := mcp.NewTool("detect_hallucination",
-		mcp.WithDescription("Information-budget diagnostic per claim."),
+		mcp.WithDescription("Information-budget diagnostic per claim. *NOTICE: 'self_consistency' mode invokes the AI multiple times, increasing API token costs!*"),
 		mcp.WithString("answer", mcp.Required(), mcp.Description("Answer to verify")),
 		mcp.WithString("run_id", mcp.Description("Run ID to verify against context")),
+		mcp.WithBoolean("use_nli", mcp.Description("Fast path via NLI Entailment logic")),
+		mcp.WithBoolean("use_similarity", mcp.Description("Fast path checking cosine distance first")),
+		mcp.WithBoolean("self_consistency", mcp.Description("Run LLM validation 3x to measure variance. WARNING: 3x Token Cost!")),
 	)
 	sw.s.AddTool(detectHallucinationTool, sw.handleDetectHallucination)
 
@@ -93,6 +97,22 @@ func (sw *ServerWrapper) registerTools() {
 		mcp.WithNumber("budget_minutes", mcp.Description("Budget minutes")),
 	)
 	sw.s.AddTool(addAttemptTool, sw.handleAddAttempt)
+
+	// split_claims
+	splitClaimsTool := mcp.NewTool("split_claims",
+		mcp.WithDescription("Atomize a large response into individual factual claims for precise verification."),
+		mcp.WithString("text", mcp.Required(), mcp.Description("Text to split into claims")),
+	)
+	sw.s.AddTool(splitClaimsTool, sw.handleSplitClaims)
+
+	// evaluate_argument
+	evaluateArgumentTool := mcp.NewTool("evaluate_argument",
+		mcp.WithDescription("Orchestrates parsing and verification across an entire argument. Formats and returns enriched validation results explicitly for the IDE Agent."),
+		mcp.WithString("text", mcp.Required(), mcp.Description("The complete argument text to evaluate")),
+		mcp.WithBoolean("enrich", mcp.Description("Whether to flag reasonings and generate corrected claims for failed verifications (uses more tokens)")),
+		mcp.WithString("context_text", mcp.Description("Optional contextual evidence to verify against. If empty, evaluates against general knowledge.")),
+	)
+	sw.s.AddTool(evaluateArgumentTool, sw.handleEvaluateArgument)
 }
 
 func (sw *ServerWrapper) handleStartRun(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -203,7 +223,58 @@ func (sw *ServerWrapper) handleDetectHallucination(ctx context.Context, req mcp.
 		return mcp.NewToolResultError(fmt.Sprintf("failed to get run: %v", err)), nil
 	}
 
-	res, err := backend.Verify(ctx, answer, steps, spans)
+	useNLI, _ := req.Params.Arguments["use_nli"].(bool)
+	useSimilarity, _ := req.Params.Arguments["use_similarity"].(bool)
+	selfConsistency, _ := req.Params.Arguments["self_consistency"].(bool)
+
+	var spanTexts []string
+	for _, sp := range spans { spanTexts = append(spanTexts, sp["Text"]) }
+
+	if useSimilarity && len(spanTexts) > 0 {
+		ansEmb, err := backend.GetEmbeddings(ctx, []string{answer})
+		if err == nil && len(ansEmb) > 0 {
+			spanEmb, err := backend.GetEmbeddings(ctx, []string{strings.Join(spanTexts, " ")})
+			if err == nil && len(spanEmb) > 0 {
+				dist := verifier.CosineDistance(ansEmb[0], spanEmb[0])
+				if dist < 0.3 {
+					b, _ := json.Marshal(map[string]any{"flagged": true, "reason": "semantic distance too low", "distance": dist})
+					return mcp.NewToolResultText(string(b)), nil
+				}
+			}
+		}
+	}
+
+	if useNLI {
+		nliRes, prob, err := backend.EvaluateNLI(ctx, strings.Join(spanTexts, " "), answer)
+		if err == nil {
+			b, _ := json.Marshal(map[string]any{"flagged": nliRes != "Entailment", "nli_result": nliRes, "nli_confidence": prob})
+			return mcp.NewToolResultText(string(b)), nil
+		}
+	}
+
+	var res []verifier.TraceResult
+	if selfConsistency {
+		// Run 3 times and average
+		var totalConf float64
+		flagCount := 0
+		for i := 0; i < 3; i++ {
+			r, e := backend.Verify(ctx, answer, steps, spans)
+			if e == nil && len(r) > 0 {
+				totalConf += r[0].ConfidenceScore
+				if r[0].Flagged { flagCount++ }
+				res = r // keep the last one as base structure
+			}
+		}
+		if len(res) > 0 {
+			res[0].ConfidenceScore = totalConf / 3.0
+			res[0].Flagged = flagCount >= 2 // majority vote
+		} else {
+			res, err = backend.Verify(ctx, answer, steps, spans)
+		}
+	} else {
+		res, err = backend.Verify(ctx, answer, steps, spans)
+	}
+
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("verification failed: %v", err)), nil
 	}
@@ -274,4 +345,107 @@ func (sw *ServerWrapper) handleAddAttempt(ctx context.Context, req mcp.CallToolR
 	att := sw.appStore.AddAttempt(run, claimID, hypothesis, budgetVal)
 	b, _ := json.Marshal(att)
 	return mcp.NewToolResultText(string(b)), nil
+}
+
+func (sw *ServerWrapper) handleSplitClaims(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	text, _ := req.Params.Arguments["text"].(string)
+
+	backendType := os.Getenv("BERRY_VERIFIER_BACKEND")
+	var backend verifier.Backend
+
+	if backendType == "anthropic" {
+		backend = backends.NewAnthropicBackend("")
+	} else if backendType == "gemini" {
+		backend = backends.NewGeminiBackend("")
+	} else if backendType == "bedrock" {
+		backend, _ = backends.NewBedrockBackend("")
+	} else if backendType == "azure" {
+		backend = backends.NewAzureBackend("")
+	} else if backendType == "vertex" {
+		backend, _ = backends.NewVertexBackend("")
+	} else {
+		backend = backends.NewOpenAIBackend("")
+	}
+
+	claims, err := backend.ParseAtomicClaims(ctx, text)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("parse failed: %v", err)), nil
+	}
+
+	b, _ := json.Marshal(map[string]any{
+		"claims": claims,
+	})
+	return mcp.NewToolResultText(string(b)), nil
+}
+
+func (sw *ServerWrapper) handleEvaluateArgument(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	text, _ := req.Params.Arguments["text"].(string)
+	contextText, _ := req.Params.Arguments["context_text"].(string)
+	enrich, ok := req.Params.Arguments["enrich"].(bool)
+	if !ok {
+		enrich = false
+	}
+
+	backendType := os.Getenv("BERRY_VERIFIER_BACKEND")
+	var backend verifier.Backend
+
+	if backendType == "anthropic" {
+		backend = backends.NewAnthropicBackend("")
+	} else if backendType == "gemini" {
+		backend = backends.NewGeminiBackend("")
+	} else if backendType == "bedrock" {
+		backend, _ = backends.NewBedrockBackend("")
+	} else if backendType == "azure" {
+		backend = backends.NewAzureBackend("")
+	} else if backendType == "vertex" {
+		backend, _ = backends.NewVertexBackend("")
+	} else {
+		backend = backends.NewOpenAIBackend("")
+	}
+
+	claims, err := backend.ParseAtomicClaims(ctx, text)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to parse claims: %v", err)), nil
+	}
+
+	steps := make([]verifier.Step, len(claims))
+	for i, claim := range claims {
+		steps[i] = verifier.Step{
+			Idx:        i,
+			Claim:      claim,
+			Cites:      []string{},
+			Confidence: 0.95,
+			Enrich:     enrich,
+		}
+	}
+
+	spans := make([]map[string]string, 0)
+	if contextText != "" {
+		spans = append(spans, map[string]string{"SID": "CTX", "Text": contextText})
+	}
+
+	results, err := backend.Verify(ctx, text, steps, spans)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("verification failed: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	for i, res := range results {
+		if res.Flagged {
+			confStr := fmt.Sprintf("%.1f%%", res.ConfidenceScore*100)
+			reasonStr := ""
+			if res.Reason != "" {
+				reasonStr = fmt.Sprintf(" — \"%s\"", res.Reason)
+			}
+			sb.WriteString(fmt.Sprintf("Claim %d: ❌ Flagged (%s)%s\n", i+1, confStr, reasonStr))
+			if res.CorrectedClaim != "" {
+				sb.WriteString(fmt.Sprintf("  ↳ *Correction: %s*\n", res.CorrectedClaim))
+			}
+		} else {
+			confStr := fmt.Sprintf("%.1f%%", res.ConfidenceScore*100)
+			sb.WriteString(fmt.Sprintf("Claim %d: ✅ Verified (%s confidence)\n", i+1, confStr))
+		}
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
 }

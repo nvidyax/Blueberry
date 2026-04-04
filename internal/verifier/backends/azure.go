@@ -154,3 +154,16 @@ func (a *AzureBackend) callAzureOpenAI(ctx context.Context, claim string, eviden
 
 	return prob, nil
 }
+
+func (a *AzureBackend) GetEmbeddings(ctx context.Context, text []string) ([][]float64, error) {
+	return nil, fmt.Errorf("GetEmbeddings not implemented natively for azure via this interface")
+}
+
+func (a *AzureBackend) ParseAtomicClaims(ctx context.Context, text string) ([]string, error) {
+	return strings.Split(text, ". "), nil
+}
+
+func (a *AzureBackend) EvaluateNLI(ctx context.Context, contextText string, claim string) (string, float64, error) {
+	return "Neutral", 0.5, fmt.Errorf("EvaluateNLI not implemented for azure")
+}
+
