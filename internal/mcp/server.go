@@ -441,9 +441,10 @@ func (sw *ServerWrapper) handleEvaluateArgument(ctx context.Context, req mcp.Cal
 			if res.CorrectedClaim != "" {
 				sb.WriteString(fmt.Sprintf("  ↳ *Correction: %s*\n", res.CorrectedClaim))
 			}
+			sb.WriteString("\n")
 		} else {
 			confStr := fmt.Sprintf("%.1f%%", res.ConfidenceScore*100)
-			sb.WriteString(fmt.Sprintf("Claim %d: ✅ Verified (%s confidence)\n", i+1, confStr))
+			sb.WriteString(fmt.Sprintf("Claim %d: ✅ Verified (%s confidence)\n\n", i+1, confStr))
 		}
 	}
 
