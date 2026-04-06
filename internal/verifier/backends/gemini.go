@@ -1,9 +1,12 @@
 package backends
 
 // Supported Google Gemini Models (as of April 2026):
-//   - gemini-3.1-flash      (default — fast, cost-efficient for semantic validation)
-//   - gemini-3.1-flash-lite (cheapest, highest throughput)
-//   - gemini-3.1-pro        (most capable, complex reasoning)
+//   - gemini-2.5-flash              (default — stable GA, fast, cost-efficient)
+//   - gemini-2.5-flash-lite         (cheapest, highest throughput)
+//   - gemini-2.5-pro                (most capable stable model)
+//   - gemini-3-flash-preview        (latest preview, cutting-edge)
+//   - gemini-3.1-flash-lite-preview (latest preview, fast)
+//   - gemini-3.1-pro-preview        (latest preview, most capable)
 
 import (
 	"bytes"
@@ -27,7 +30,7 @@ type GeminiBackend struct {
 
 func NewGeminiBackend(model string) *GeminiBackend {
 	if model == "" {
-		model = "gemini-3.1-flash"
+		model = "gemini-2.5-flash"
 	}
 	baseURL := os.Getenv("GEMINI_BASE_URL")
 	if baseURL == "" {

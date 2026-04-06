@@ -83,8 +83,18 @@ func TestGemini_FallbackGarbage(t *testing.T) {
 		{Idx: 0, Claim: "test", Cites: []string{"S1"}, Confidence: 0.9},
 	}
 
-	_, err := backend.Verify(context.Background(), "answer", steps, nil)
-	if err == nil {
-		t.Fatal("expected error parsing fallback garbage string")
+	// The updated backend gracefully falls back to 0.5 confidence on unparseable responses
+	res, err := backend.Verify(context.Background(), "answer", steps, nil)
+	if err != nil {
+		t.Fatalf("unexpected error (backend should gracefully fallback): %v", err)
+	}
+	if len(res) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(res))
+	}
+	if res[0].ConfidenceScore != 0.5 {
+		t.Errorf("expected fallback score 0.5, got %f", res[0].ConfidenceScore)
+	}
+	if !res[0].Flagged {
+		t.Error("expected flagged on garbage response")
 	}
 }

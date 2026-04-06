@@ -6,9 +6,11 @@ By establishing a robust local storage layer and a structured reasoning workflow
 
 ## Features
 
-- **MCP Tool Registration**: Out-of-the-box MCP tools spanning full diagnostics limits (`start_run`, `load_run`, `add_span`, `detect_hallucination`, `get_run_status`, `list_spans`, `add_attempt`).
+- **MCP Tool Registration**: Out-of-the-box MCP tools spanning full diagnostics limits (`start_run`, `load_run`, `add_span`, `detect_hallucination`, `get_run_status`, `list_spans`, `add_attempt`, `split_claims`, `evaluate_argument`).
 - **Evidence-First Workflow**: Enforces a pattern where AI must construct "runs" and pull context before drawing conclusions.
-- **Verification Backends**: Integrates seamlessly with OpenAI, Anthropic, Google Gemini, and AWS Bedrock to securely score confidence and strictly limit drift across generative claims.
+- **Verification Backends**: Integrates seamlessly with OpenAI, Anthropic, Google Gemini, AWS Bedrock, Azure OpenAI, and Google Vertex AI to securely score confidence and strictly limit drift across generative claims.
+- **Enriched Verification**: All backends support enriched mode (`enrich=true`) which returns reasoning tags and corrected claims alongside confidence scores.
+- **LLM-Powered Claim Parsing**: All backends use LLM-based atomic claim decomposition instead of naive sentence splitting, ensuring accurate verification granularity.
 - **Local State Persistency**: Keeps a persistent trace by logging runs, spanning evidence, and hypotheses to local JSON storage for inspection and continuity.
 
 ## Architecture
@@ -41,31 +43,37 @@ graph TD
 
 ## Supported Verification Backends
 
-You can define which foundational model verifies your AI's tracing logs by setting the environment variable `BERRY_VERIFIER_BACKEND`:
+You can define which foundational model verifies your AI's tracing logs by setting the environment variable `BLUEBERRY_VERIFIER_BACKEND` (legacy `BERRY_VERIFIER_BACKEND` is also supported for backward compatibility):
 
-1. **OpenAI** (`BERRY_VERIFIER_BACKEND=openai`)
+1. **OpenAI** (`BLUEBERRY_VERIFIER_BACKEND=openai`)
    - Evaluates token bounds via natural logarithmic probabilities logic.
-   - Env Defaults: Uses `OPENAI_API_KEY`, default model `gpt-4o-mini`.
+   - Env Defaults: Uses `OPENAI_API_KEY`, default model `gpt-5.4-mini`.
+   - Supported models: `gpt-5.4-mini`, `gpt-5.4-thinking`, `gpt-5.4-pro`, `gpt-5.3-instant`
 
-2. **Anthropic** (`BERRY_VERIFIER_BACKEND=anthropic`)
-   - Employs heuristic constraints for Claude 3 logic grading.
-   - Env Defaults: Uses `ANTHROPIC_API_KEY`, default model `claude-3-haiku-20240307`.
+2. **Anthropic** (`BLUEBERRY_VERIFIER_BACKEND=anthropic`)
+   - Employs heuristic constraints for Claude logic grading.
+   - Env Defaults: Uses `ANTHROPIC_API_KEY`, default model `claude-sonnet-4-6-20260217`.
+   - Supported models: `claude-sonnet-4-6-20260217`, `claude-opus-4-6-20260205`, `claude-haiku-4-5`
 
-3. **Google Gemini** (`BERRY_VERIFIER_BACKEND=gemini`)
+3. **Google Gemini** (`BLUEBERRY_VERIFIER_BACKEND=gemini`)
    - Uses strict bounding parameters via Google Generative REST framework.
-   - Env Defaults: Uses `GEMINI_API_KEY`, default model `gemini-3-flash-preview`.
+   - Env Defaults: Uses `GEMINI_API_KEY`, default model `gemini-2.5-flash`.
+   - Supported models: `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-pro`, `gemini-3-flash-preview`, `gemini-3.1-flash-lite-preview`, `gemini-3.1-pro-preview`
 
-4. **AWS Bedrock** (`BERRY_VERIFIER_BACKEND=bedrock`)
+4. **AWS Bedrock** (`BLUEBERRY_VERIFIER_BACKEND=bedrock`)
    - Uses AWS SDK v2 orchestration with SigV4 API compliance handling for enterprise clouds.
-   - Env Defaults: Relies on localized AWS credentials profile. Default model acts as Claude Haiku wrapper.
+   - Env Defaults: Relies on localized AWS credentials profile. Default model `anthropic.claude-haiku-4-5-20251001-v1:0`.
+   - Supported models: `anthropic.claude-haiku-4-5-20251001-v1:0`, `anthropic.claude-sonnet-4-6`, `anthropic.claude-opus-4-6-v1`
 
-5. **Azure OpenAI** (`BERRY_VERIFIER_BACKEND=azure`)
+5. **Azure OpenAI** (`BLUEBERRY_VERIFIER_BACKEND=azure`)
    - Fully mimics OpenAI logic grading utilizing dedicated enterprise endpoints.
-   - Env Defaults: `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, default model `gpt-4`.
+   - Env Defaults: `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, default model `gpt-5.4-mini`, API version `2025-12-01-preview`.
+   - Supported models: `gpt-5.4-mini`, `gpt-5.4-thinking`, `gpt-5.4-pro`
 
-6. **Google Vertex AI** (`BERRY_VERIFIER_BACKEND=vertex`)
+6. **Google Vertex AI** (`BLUEBERRY_VERIFIER_BACKEND=vertex`)
    - Enterprise equivalent to Google Gemini utilizing Google Cloud's official `genai` SDK and service-account OAuth handshakes.
-   - Env Defaults: `VERTEX_PROJECT_ID`, default location `us-central1`, default model `gemini-3-flash-preview`.
+   - Env Defaults: `VERTEX_PROJECT_ID`, default location `us-central1`, default model `gemini-2.5-flash`.
+   - Supported models: `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-pro`, `gemini-3-flash-preview`, `gemini-3.1-flash-lite-preview`, `gemini-3.1-pro-preview`
 
 ## Available Tools
 
@@ -76,6 +84,8 @@ You can define which foundational model verifies your AI's tracing logs by setti
 - `add_span`: Add individual fragments of fetched evidence arrays linearly to limit data context windows natively prior to conclusions.
 - `add_attempt`: Formulate and queue an LLM conclusion claim into the timeline securely without verifying yet.
 - `detect_hallucination`: Pass a specified claim answer against the trace timeline. Extracts spans out of the active store, passes them strictly into the defined `Verifier Engine`, returning hallucination status and specific probability tolerances!
+- `split_claims`: Atomize a large response into individual factual claims for precise verification.
+- `evaluate_argument`: Orchestrates parsing and verification across an entire argument. Formats and returns enriched validation results.
 
 ## Installation & Usage (Universal IDE Support)
 
@@ -85,7 +95,7 @@ Blueberry is an open-standard MCP server. You can install it on **Cursor, VS Cod
 Download the pre-compiled binary for your operating system (Windows, macOS, Linux) from the [GitHub Releases](https://github.com/vidyabodepudi/Blueberry/releases) page.
 
 ### 2. Configure Your IDE
-Open your IDE's MCP settings (e.g., `mcp.json` in VS Code/Cursor conventions) and add Blueberry. You can specify your preferred LLM provider here using `BERRY_VERIFIER_BACKEND` (`openai`, `anthropic`, `gemini`, `azure`, `bedrock`, or `vertex`) and passing the respective API key:
+Open your IDE's MCP settings (e.g., `mcp.json` in VS Code/Cursor conventions) and add Blueberry. You can specify your preferred LLM provider here using `BLUEBERRY_VERIFIER_BACKEND` (`openai`, `anthropic`, `gemini`, `azure`, `bedrock`, or `vertex`) and passing the respective API key:
 
 ```json
 {
@@ -94,7 +104,7 @@ Open your IDE's MCP settings (e.g., `mcp.json` in VS Code/Cursor conventions) an
       "command": "/absolute/path/to/downloaded/blueberry",
       "args": ["-transport", "stdio"],
       "env": {
-        "BERRY_VERIFIER_BACKEND": "openai",
+        "BLUEBERRY_VERIFIER_BACKEND": "openai",
         "OPENAI_API_KEY": "your-api-key"
       }
     }

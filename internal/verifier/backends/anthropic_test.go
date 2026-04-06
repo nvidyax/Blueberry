@@ -67,4 +67,5 @@ func TestAnthropic_FallbackGarbage(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error parsing fallback garbage string")
 	}
+	t.Logf("Got expected error: %v", err)
 }

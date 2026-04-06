@@ -1,9 +1,12 @@
 package backends
 
 // Supported Google Vertex AI Models (as of April 2026):
-//   - gemini-3.1-flash      (default — fast, cost-efficient)
-//   - gemini-3.1-flash-lite (cheapest, highest throughput)
-//   - gemini-3.1-pro        (most capable, complex reasoning)
+//   - gemini-2.5-flash              (default — stable GA, fast, cost-efficient)
+//   - gemini-2.5-flash-lite         (cheapest, highest throughput)
+//   - gemini-2.5-pro                (most capable stable model)
+//   - gemini-3-flash-preview        (latest preview)
+//   - gemini-3.1-flash-lite-preview (latest preview, fast)
+//   - gemini-3.1-pro-preview        (latest preview, most capable)
 
 import (
 	"context"
@@ -24,7 +27,7 @@ type VertexBackend struct {
 
 func NewVertexBackend(model string) (*VertexBackend, error) {
 	if model == "" {
-		model = "gemini-3.1-flash"
+		model = "gemini-2.5-flash"
 	}
 
 	projectID := os.Getenv("VERTEX_PROJECT_ID")
