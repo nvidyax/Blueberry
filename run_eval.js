@@ -1,7 +1,7 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 
-const targetText = process.argv[2] || "Artemis II is an ongoing NASA crewed spaceflight mission.";
+const targetText = fs.readFileSync("claims.txt", "utf8");
 
 // read IDE mcp_config.json to grab env overrides
 let mcpEnv = {};

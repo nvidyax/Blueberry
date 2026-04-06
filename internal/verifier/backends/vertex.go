@@ -1,10 +1,14 @@
 package backends
 
+// Supported Google Vertex AI Models (as of April 2026):
+//   - gemini-3.1-flash      (default — fast, cost-efficient)
+//   - gemini-3.1-flash-lite (cheapest, highest throughput)
+//   - gemini-3.1-pro        (most capable, complex reasoning)
+
 import (
 	"context"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 
 	"google.golang.org/genai"
@@ -20,7 +24,7 @@ type VertexBackend struct {
 
 func NewVertexBackend(model string) (*VertexBackend, error) {
 	if model == "" {
-		model = "gemini-3-flash-preview"
+		model = "gemini-3.1-flash"
 	}
 
 	projectID := os.Getenv("VERTEX_PROJECT_ID")
@@ -50,23 +54,59 @@ func (v *VertexBackend) Name() string {
 	return "vertex"
 }
 
+// callVertex is the shared GenerateContent call for all Vertex requests.
+func (v *VertexBackend) callVertex(ctx context.Context, prompt string) (string, error) {
+	var temp float32 = 0.0
+	config := &genai.GenerateContentConfig{
+		Temperature: &temp,
+	}
+
+	resp, err := v.client.Models.GenerateContent(ctx, v.Model, genai.Text(prompt), config)
+	if err != nil {
+		return "", err
+	}
+
+	textResp := resp.Text()
+	if textResp == "" {
+		return "", fmt.Errorf("no valid text returned from Vertex")
+	}
+
+	return strings.TrimSpace(textResp), nil
+}
+
 func (v *VertexBackend) Verify(ctx context.Context, answer string, steps []verifier.Step, spans []map[string]string) ([]verifier.TraceResult, error) {
 	if v.ProjectID == "" {
 		return nil, fmt.Errorf("VERTEX_PROJECT_ID is not set")
 	}
 
-	var evidenceText strings.Builder
-	for _, sp := range spans {
-		evidenceText.WriteString(fmt.Sprintf("[%s] %s\n", sp["SID"], sp["Text"]))
-	}
-	evidence := strings.TrimSpace(evidenceText.String())
-
+	evidence := buildEvidenceText(spans)
 	results := make([]verifier.TraceResult, len(steps))
 
 	for i, st := range steps {
-		conf, err := v.callVertexHeuristic(ctx, st.Claim, evidence)
-		if err != nil {
-			return nil, fmt.Errorf("vertex error on step %d: %w", i, err)
+		var conf float64
+		var reason, corrected string
+		var err error
+
+		if st.Enrich {
+			prompt := buildEnrichPrompt(st.Claim, evidence)
+			text, callErr := v.callVertex(ctx, prompt)
+			if callErr != nil {
+				return nil, fmt.Errorf("vertex error on step %d: %w", i, callErr)
+			}
+			conf, reason, corrected, err = parseEnrichedJSON(text)
+			if err != nil {
+				return nil, fmt.Errorf("vertex enrich parse error on step %d: %w", i, err)
+			}
+		} else {
+			prompt := buildVerifyPrompt(st.Claim, evidence, false)
+			text, callErr := v.callVertex(ctx, prompt)
+			if callErr != nil {
+				return nil, fmt.Errorf("vertex error on step %d: %w", i, callErr)
+			}
+			conf, err = parseHeuristicFloat(text)
+			if err != nil {
+				conf = 0.5
+			}
 		}
 
 		flagged := conf < st.Confidence
@@ -82,48 +122,11 @@ func (v *VertexBackend) Verify(ctx context.Context, answer string, steps []verif
 			Target:          st.Confidence,
 			ConfidenceScore: conf,
 			Flagged:         flagged,
+			Reason:          reason,
+			CorrectedClaim:  corrected,
 		}
 	}
 	return results, nil
-}
-
-func (v *VertexBackend) callVertexHeuristic(ctx context.Context, claim string, evidence string) (float64, error) {
-	var prompt string
-	if evidence != "" {
-		prompt = fmt.Sprintf("Evidence:\n%s\n\nIs the following claim strictly supported by the evidence? Claim: %s\nOutput ONLY a float between 0.00 and 1.00 indicating your confidence.", evidence, claim)
-	} else {
-		prompt = fmt.Sprintf("Is the following claim supported by general knowledge? Claim: %s\nOutput ONLY a float between 0.00 and 1.00 indicating your confidence.", claim)
-	}
-
-	var temp float32 = 0.0
-	config := &genai.GenerateContentConfig{
-		Temperature: &temp,
-	}
-
-	resp, err := v.client.Models.GenerateContent(ctx, v.Model, genai.Text(prompt), config)
-	if err != nil {
-		return 0, err
-	}
-
-	textResp := resp.Text()
-	if textResp == "" {
-		return 0, fmt.Errorf("no valid text returned from Vertex")
-	}
-
-	textResp = strings.TrimSpace(textResp)
-
-	score, err := strconv.ParseFloat(textResp, 64)
-	if err != nil {
-		if strings.Contains(strings.ToLower(textResp), "1.00") {
-			return 1.0, nil
-		}
-		if pos := strings.Contains(strings.ToLower(textResp), "0.00"); pos {
-			return 0.0, nil
-		}
-		return 0.5, fmt.Errorf("could not parse valid float from Vertex Response: %s", textResp)
-	}
-
-	return score, nil
 }
 
 func (v *VertexBackend) GetEmbeddings(ctx context.Context, text []string) ([][]float64, error) {
@@ -131,10 +134,19 @@ func (v *VertexBackend) GetEmbeddings(ctx context.Context, text []string) ([][]f
 }
 
 func (v *VertexBackend) ParseAtomicClaims(ctx context.Context, text string) ([]string, error) {
-	return strings.Split(text, ". "), nil
+	if v.ProjectID == "" {
+		return strings.Split(text, ". "), nil
+	}
+
+	prompt := buildParseClaimsPrompt(text)
+	content, err := v.callVertex(ctx, prompt)
+	if err != nil {
+		return strings.Split(text, ". "), nil
+	}
+
+	return parseClaimsJSON(content, text), nil
 }
 
 func (v *VertexBackend) EvaluateNLI(ctx context.Context, contextText string, claim string) (string, float64, error) {
 	return "Neutral", 0.5, fmt.Errorf("EvaluateNLI not implemented for vertex")
 }
-

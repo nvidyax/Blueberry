@@ -22,7 +22,7 @@ type ServerWrapper struct {
 func NewServerWrapper(appStore *store.LocalStore) *ServerWrapper {
 	s := server.NewMCPServer(
 		"blueberry",
-		"1.0.0",
+		"2.0.0",
 	)
 
 	sw := &ServerWrapper{
@@ -36,6 +36,32 @@ func NewServerWrapper(appStore *store.LocalStore) *ServerWrapper {
 
 func (sw *ServerWrapper) Server() *server.MCPServer {
 	return sw.s
+}
+
+// resolveBackend creates the appropriate verifier backend based on the
+// BLUEBERRY_VERIFIER_BACKEND environment variable. This replaces the previously
+// duplicated if/else chains that were copy-pasted across three handlers.
+func resolveBackend() (verifier.Backend, error) {
+	backendType := os.Getenv("BLUEBERRY_VERIFIER_BACKEND")
+	// Backwards compatibility: also check the legacy env var
+	if backendType == "" {
+		backendType = os.Getenv("BERRY_VERIFIER_BACKEND")
+	}
+
+	switch backendType {
+	case "anthropic":
+		return backends.NewAnthropicBackend(""), nil
+	case "gemini":
+		return backends.NewGeminiBackend(""), nil
+	case "bedrock":
+		return backends.NewBedrockBackend("")
+	case "azure":
+		return backends.NewAzureBackend(""), nil
+	case "vertex":
+		return backends.NewVertexBackend("")
+	default:
+		return backends.NewOpenAIBackend(""), nil
+	}
 }
 
 func (sw *ServerWrapper) registerTools() {
@@ -174,36 +200,16 @@ func (sw *ServerWrapper) handleDetectHallucination(ctx context.Context, req mcp.
 	answer, _ := req.Params.Arguments["answer"].(string)
 	runID, _ := req.Params.Arguments["run_id"].(string)
 	
-	backendType := os.Getenv("BERRY_VERIFIER_BACKEND")
-	var backend verifier.Backend
-
-	if backendType == "anthropic" {
-		backend = backends.NewAnthropicBackend("")
-	} else if backendType == "gemini" {
-		backend = backends.NewGeminiBackend("")
-	} else if backendType == "bedrock" {
-		var err error
-		backend, err = backends.NewBedrockBackend("")
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to init bedrock: %v", err)), nil
-		}
-	} else if backendType == "azure" {
-		backend = backends.NewAzureBackend("")
-	} else if backendType == "vertex" {
-		var err error
-		backend, err = backends.NewVertexBackend("")
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to init vertex: %v", err)), nil
-		}
-	} else {
-		backend = backends.NewOpenAIBackend("")
+	backend, err := resolveBackend()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to init backend: %v", err)), nil
 	}
 
 	steps := []verifier.Step{
 		{
 			Idx:        0,
 			Claim:      answer,
-			Cites:      []string{"S0"}, // Can be improved in future to parse cites
+			Cites:      []string{"S0"},
 			Confidence: 0.95,
 		},
 	}
@@ -350,21 +356,9 @@ func (sw *ServerWrapper) handleAddAttempt(ctx context.Context, req mcp.CallToolR
 func (sw *ServerWrapper) handleSplitClaims(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	text, _ := req.Params.Arguments["text"].(string)
 
-	backendType := os.Getenv("BERRY_VERIFIER_BACKEND")
-	var backend verifier.Backend
-
-	if backendType == "anthropic" {
-		backend = backends.NewAnthropicBackend("")
-	} else if backendType == "gemini" {
-		backend = backends.NewGeminiBackend("")
-	} else if backendType == "bedrock" {
-		backend, _ = backends.NewBedrockBackend("")
-	} else if backendType == "azure" {
-		backend = backends.NewAzureBackend("")
-	} else if backendType == "vertex" {
-		backend, _ = backends.NewVertexBackend("")
-	} else {
-		backend = backends.NewOpenAIBackend("")
+	backend, err := resolveBackend()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to init backend: %v", err)), nil
 	}
 
 	claims, err := backend.ParseAtomicClaims(ctx, text)
@@ -386,21 +380,9 @@ func (sw *ServerWrapper) handleEvaluateArgument(ctx context.Context, req mcp.Cal
 		enrich = false
 	}
 
-	backendType := os.Getenv("BERRY_VERIFIER_BACKEND")
-	var backend verifier.Backend
-
-	if backendType == "anthropic" {
-		backend = backends.NewAnthropicBackend("")
-	} else if backendType == "gemini" {
-		backend = backends.NewGeminiBackend("")
-	} else if backendType == "bedrock" {
-		backend, _ = backends.NewBedrockBackend("")
-	} else if backendType == "azure" {
-		backend = backends.NewAzureBackend("")
-	} else if backendType == "vertex" {
-		backend, _ = backends.NewVertexBackend("")
-	} else {
-		backend = backends.NewOpenAIBackend("")
+	backend, err := resolveBackend()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to init backend: %v", err)), nil
 	}
 
 	claims, err := backend.ParseAtomicClaims(ctx, text)

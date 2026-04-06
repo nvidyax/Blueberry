@@ -15,18 +15,18 @@ func LoadConfig() *Config {
 	}
 }
 
-func EnsureBerryHome() string {
+func EnsureBlueberryHome() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = os.TempDir()
 	}
-	berryHome := filepath.Join(home, ".berry")
-	os.MkdirAll(berryHome, 0755)
-	return berryHome
+	blueberryHome := filepath.Join(home, ".blueberry")
+	os.MkdirAll(blueberryHome, 0755)
+	return blueberryHome
 }
 
 func RunsDir() string {
-	d := filepath.Join(EnsureBerryHome(), "runs")
+	d := filepath.Join(EnsureBlueberryHome(), "runs")
 	os.MkdirAll(d, 0755)
 	return d
 }

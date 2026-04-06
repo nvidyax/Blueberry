@@ -1,5 +1,10 @@
 package backends
 
+// Supported Google Gemini Models (as of April 2026):
+//   - gemini-3.1-flash      (default — fast, cost-efficient for semantic validation)
+//   - gemini-3.1-flash-lite (cheapest, highest throughput)
+//   - gemini-3.1-pro        (most capable, complex reasoning)
+
 import (
 	"bytes"
 	"context"
@@ -22,7 +27,7 @@ type GeminiBackend struct {
 
 func NewGeminiBackend(model string) *GeminiBackend {
 	if model == "" {
-		model = "gemini-3-flash-preview"
+		model = "gemini-3.1-flash"
 	}
 	baseURL := os.Getenv("GEMINI_BASE_URL")
 	if baseURL == "" {
@@ -41,51 +46,8 @@ func (g *GeminiBackend) Name() string {
 	return "gemini"
 }
 
-func (g *GeminiBackend) Verify(ctx context.Context, answer string, steps []verifier.Step, spans []map[string]string) ([]verifier.TraceResult, error) {
-	if g.APIKey == "" {
-		return nil, fmt.Errorf("GEMINI_API_KEY is not set")
-	}
-
-	var evidenceText strings.Builder
-	for _, sp := range spans {
-		evidenceText.WriteString(fmt.Sprintf("[%s] %s\n", sp["SID"], sp["Text"]))
-	}
-	evidence := strings.TrimSpace(evidenceText.String())
-
-	results := make([]verifier.TraceResult, len(steps))
-
-	for i, st := range steps {
-		conf, err := g.callGeminiHeuristic(ctx, st.Claim, evidence)
-		if err != nil {
-			return nil, fmt.Errorf("gemini error on step %d: %w", i, err)
-		}
-
-		flagged := conf < st.Confidence
-		if len(st.Cites) == 0 && evidence != "" {
-			flagged = true
-			conf = 0.5
-		}
-
-		results[i] = verifier.TraceResult{
-			Idx:             st.Idx,
-			Claim:           st.Claim,
-			Cites:           st.Cites,
-			Target:          st.Confidence,
-			ConfidenceScore: conf,
-			Flagged:         flagged,
-		}
-	}
-	return results, nil
-}
-
-func (g *GeminiBackend) callGeminiHeuristic(ctx context.Context, claim string, evidence string) (float64, error) {
-	var prompt string
-	if evidence != "" {
-		prompt = fmt.Sprintf("Evidence:\n%s\n\nIs the following claim strictly supported by the evidence? Claim: %s\nOutput ONLY a float between 0.00 and 1.00 indicating your confidence.", evidence, claim)
-	} else {
-		prompt = fmt.Sprintf("Is the following claim supported by general knowledge? Claim: %s\nOutput ONLY a float between 0.00 and 1.00 indicating your confidence.", claim)
-	}
-
+// callGemini is the shared HTTP call for all Gemini generateContent requests.
+func (g *GeminiBackend) callGemini(ctx context.Context, prompt string) (string, error) {
 	payload := map[string]interface{}{
 		"contents": []map[string]interface{}{
 			{
@@ -101,26 +63,26 @@ func (g *GeminiBackend) callGeminiHeuristic(ctx context.Context, claim string, e
 
 	b, err := json.Marshal(payload)
 	if err != nil {
-		return 0, err
+		return "", fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
 	url := fmt.Sprintf("%s/%s:generateContent?key=%s", g.BaseURL, g.Model, g.APIKey)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
 	if err != nil {
-		return 0, err
+		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return 0, err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("bad status %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("bad status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var res struct {
@@ -134,23 +96,88 @@ func (g *GeminiBackend) callGeminiHeuristic(ctx context.Context, claim string, e
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return 0, err
+		return "", err
 	}
 
 	if len(res.Candidates) == 0 || len(res.Candidates[0].Content.Parts) == 0 {
-		return 0, fmt.Errorf("no content returned")
+		return "", fmt.Errorf("no content returned")
 	}
 
-	textResp := strings.TrimSpace(res.Candidates[0].Content.Parts[0].Text)
-	score, err := strconv.ParseFloat(textResp, 64)
+	return strings.TrimSpace(res.Candidates[0].Content.Parts[0].Text), nil
+}
+
+func (g *GeminiBackend) Verify(ctx context.Context, answer string, steps []verifier.Step, spans []map[string]string) ([]verifier.TraceResult, error) {
+	if g.APIKey == "" {
+		return nil, fmt.Errorf("GEMINI_API_KEY is not set")
+	}
+
+	evidence := buildEvidenceText(spans)
+	results := make([]verifier.TraceResult, len(steps))
+
+	for i, st := range steps {
+		var conf float64
+		var reason, corrected string
+		var err error
+
+		if st.Enrich {
+			prompt := buildEnrichPrompt(st.Claim, evidence)
+			text, callErr := g.callGemini(ctx, prompt)
+			if callErr != nil {
+				return nil, fmt.Errorf("gemini error on step %d: %w", i, callErr)
+			}
+			conf, reason, corrected, err = parseEnrichedJSON(text)
+			if err != nil {
+				return nil, fmt.Errorf("gemini enrich parse error on step %d: %w", i, err)
+			}
+		} else {
+			prompt := buildVerifyPrompt(st.Claim, evidence, false)
+			text, callErr := g.callGemini(ctx, prompt)
+			if callErr != nil {
+				return nil, fmt.Errorf("gemini error on step %d: %w", i, callErr)
+			}
+			conf, err = parseHeuristicFloat(text)
+			if err != nil {
+				// Non-fatal: use 0.5 as fallback
+				conf = 0.5
+			}
+		}
+
+		flagged := conf < st.Confidence
+		if len(st.Cites) == 0 && evidence != "" {
+			flagged = true
+			conf = 0.5
+		}
+
+		results[i] = verifier.TraceResult{
+			Idx:             st.Idx,
+			Claim:           st.Claim,
+			Cites:           st.Cites,
+			Target:          st.Confidence,
+			ConfidenceScore: conf,
+			Flagged:         flagged,
+			Reason:          reason,
+			CorrectedClaim:  corrected,
+		}
+	}
+	return results, nil
+}
+
+func (g *GeminiBackend) callGeminiHeuristic(ctx context.Context, claim string, evidence string) (float64, error) {
+	prompt := buildVerifyPrompt(claim, evidence, false)
+	text, err := g.callGemini(ctx, prompt)
 	if err != nil {
-		if strings.Contains(strings.ToLower(textResp), "1.00") {
+		return 0, err
+	}
+
+	score, err := strconv.ParseFloat(text, 64)
+	if err != nil {
+		if strings.Contains(strings.ToLower(text), "1.00") {
 			return 1.0, nil
 		}
-		if strings.Contains(strings.ToLower(textResp), "0.00") {
+		if strings.Contains(strings.ToLower(text), "0.00") {
 			return 0.0, nil
 		}
-		return 0.5, fmt.Errorf("could not parse valid float from Gemini: %s", textResp)
+		return 0.5, fmt.Errorf("could not parse valid float from Gemini: %s", text)
 	}
 
 	return score, nil
@@ -161,10 +188,19 @@ func (g *GeminiBackend) GetEmbeddings(ctx context.Context, text []string) ([][]f
 }
 
 func (g *GeminiBackend) ParseAtomicClaims(ctx context.Context, text string) ([]string, error) {
-	return strings.Split(text, ". "), nil
+	if g.APIKey == "" {
+		return strings.Split(text, ". "), nil
+	}
+
+	prompt := buildParseClaimsPrompt(text)
+	content, err := g.callGemini(ctx, prompt)
+	if err != nil {
+		return strings.Split(text, ". "), nil
+	}
+
+	return parseClaimsJSON(content, text), nil
 }
 
 func (g *GeminiBackend) EvaluateNLI(ctx context.Context, contextText string, claim string) (string, float64, error) {
 	return "Neutral", 0.5, fmt.Errorf("EvaluateNLI not implemented for gemini")
 }
-

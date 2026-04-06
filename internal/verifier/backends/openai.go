@@ -1,5 +1,13 @@
 package backends
 
+// Supported OpenAI Models (as of April 2026):
+//   - gpt-5.4-mini    (default — fast, cost-efficient for semantic validation)
+//   - gpt-5.4-thinking (deep reasoning, higher cost)
+//   - gpt-5.4-pro     (most capable, research-grade)
+//   - gpt-5.3-instant (legacy fast model)
+//
+// Embedding model: text-embedding-3-small (still current)
+
 import (
 	"bytes"
 	"context"
@@ -22,7 +30,7 @@ type OpenAIBackend struct {
 
 func NewOpenAIBackend(model string) *OpenAIBackend {
 	if model == "" {
-		model = "gpt-4o-mini"
+		model = "gpt-5.4-mini"
 	}
 	baseURL := os.Getenv("OPENAI_BASE_URL")
 	if baseURL == "" {
@@ -46,12 +54,7 @@ func (o *OpenAIBackend) Verify(ctx context.Context, answer string, steps []verif
 		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
 	}
 
-	var evidenceText strings.Builder
-	for _, sp := range spans {
-		evidenceText.WriteString(fmt.Sprintf("[%s] %s\n", sp["SID"], sp["Text"]))
-	}
-	evidence := strings.TrimSpace(evidenceText.String())
-
+	evidence := buildEvidenceText(spans)
 	results := make([]verifier.TraceResult, len(steps))
 
 	for i, st := range steps {
@@ -72,6 +75,7 @@ func (o *OpenAIBackend) Verify(ctx context.Context, answer string, steps []verif
 		flagged := conf < st.Confidence
 		if len(st.Cites) == 0 && evidence != "" {
 			flagged = true
+			conf = 0.5
 		}
 
 		results[i] = verifier.TraceResult{
@@ -89,12 +93,7 @@ func (o *OpenAIBackend) Verify(ctx context.Context, answer string, steps []verif
 }
 
 func (o *OpenAIBackend) callOpenAI(ctx context.Context, claim string, evidence string) (float64, error) {
-	var prompt string
-	if evidence != "" {
-		prompt = fmt.Sprintf("Evidence:\n%s\n\nIs the following claim strictly supported by the evidence? Answer only 'Yes' or 'No'. Claim: %s", evidence, claim)
-	} else {
-		prompt = fmt.Sprintf("Is the following claim supported by general knowledge? Answer only 'Yes' or 'No'. Claim: %s", claim)
-	}
+	prompt := buildVerifyPrompt(claim, evidence, false)
 
 	payload := map[string]interface{}{
 		"model": o.Model,
@@ -163,12 +162,7 @@ func (o *OpenAIBackend) callOpenAI(ctx context.Context, claim string, evidence s
 }
 
 func (o *OpenAIBackend) callOpenAIEnrich(ctx context.Context, claim string, evidence string) (float64, string, string, error) {
-	var prompt string
-	if evidence != "" {
-		prompt = fmt.Sprintf("Evidence:\n%s\n\nIs the following claim strictly supported by the evidence? Claim: %s\nOutput ONLY a valid JSON object with: 1. 'supported' (boolean), 2. 'confidence' (float 0.00 to 1.00), 3. 'reason' (short string tag), 4. 'corrected' (string, corrected claim).", evidence, claim)
-	} else {
-		prompt = fmt.Sprintf("Is the following claim supported by general knowledge? Claim: %s\nOutput ONLY a valid JSON object with: 1. 'supported' (boolean), 2. 'confidence' (float 0.00 to 1.00), 3. 'reason' (short string tag), 4. 'corrected' (string, corrected claim).", claim)
-	}
+	prompt := buildEnrichPrompt(claim, evidence)
 
 	payload := map[string]interface{}{
 		"model": o.Model,
@@ -178,8 +172,16 @@ func (o *OpenAIBackend) callOpenAIEnrich(ctx context.Context, claim string, evid
 		"temperature":  0.0,
 	}
 
-	b, _ := json.Marshal(payload)
-	req, _ := http.NewRequestWithContext(ctx, "POST", o.BaseURL+"/chat/completions", bytes.NewReader(b))
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return 0, "", "", fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", o.BaseURL+"/chat/completions", bytes.NewReader(b))
+	if err != nil {
+		return 0, "", "", fmt.Errorf("failed to create request: %w", err)
+	}
+
 	req.Header.Set("Authorization", "Bearer "+o.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -210,24 +212,7 @@ func (o *OpenAIBackend) callOpenAIEnrich(ctx context.Context, claim string, evid
 		return 0, "", "", fmt.Errorf("no choices returned")
 	}
 
-	content := strings.TrimSpace(res.Choices[0].Message.Content)
-	content = strings.TrimPrefix(content, "```json")
-	content = strings.TrimPrefix(content, "```")
-	content = strings.TrimSuffix(content, "```")
-	content = strings.TrimSpace(content)
-
-	var enriched struct {
-		Supported  bool    `json:"supported"`
-		Confidence float64 `json:"confidence"`
-		Reason     string  `json:"reason"`
-		Corrected  string  `json:"corrected"`
-	}
-
-	if err := json.Unmarshal([]byte(content), &enriched); err != nil {
-		return 0, "", "", fmt.Errorf("JSON unmarshal error: %w", err)
-	}
-
-	return enriched.Confidence, enriched.Reason, enriched.Corrected, nil
+	return parseEnrichedJSON(res.Choices[0].Message.Content)
 }
 
 func (o *OpenAIBackend) GetEmbeddings(ctx context.Context, text []string) ([][]float64, error) {
@@ -236,12 +221,20 @@ func (o *OpenAIBackend) GetEmbeddings(ctx context.Context, text []string) ([][]f
 	}
 	
 	payload := map[string]interface{}{
-		"model": "text-embedding-3-small", // standard small embedding model
+		"model": "text-embedding-3-small",
 		"input": text,
 	}
 
-	b, _ := json.Marshal(payload)
-	req, _ := http.NewRequestWithContext(ctx, "POST", o.BaseURL+"/embeddings", bytes.NewReader(b))
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", o.BaseURL+"/embeddings", bytes.NewReader(b))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
 	req.Header.Set("Authorization", "Bearer "+o.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -283,8 +276,16 @@ func (o *OpenAIBackend) ParseAtomicClaims(ctx context.Context, text string) ([]s
 		"temperature": 0.0,
 	}
 
-	b, _ := json.Marshal(payload)
-	req, _ := http.NewRequestWithContext(ctx, "POST", o.BaseURL+"/chat/completions", bytes.NewReader(b))
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", o.BaseURL+"/chat/completions", bytes.NewReader(b))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
 	req.Header.Set("Authorization", "Bearer "+o.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -310,12 +311,7 @@ func (o *OpenAIBackend) ParseAtomicClaims(ctx context.Context, text string) ([]s
 		return nil, fmt.Errorf("no choices returned")
 	}
 
-	content := strings.TrimSpace(res.Choices[0].Message.Content)
-	// simple cleanup if it wraps in markdown code blocks
-	content = strings.TrimPrefix(content, "```json")
-	content = strings.TrimPrefix(content, "```")
-	content = strings.TrimSuffix(content, "```")
-	content = strings.TrimSpace(content)
+	content := stripCodeFences(res.Choices[0].Message.Content)
 
 	var claims []string
 	if err := json.Unmarshal([]byte(content), &claims); err != nil {
@@ -340,8 +336,16 @@ func (o *OpenAIBackend) EvaluateNLI(ctx context.Context, contextText string, cla
 		"top_logprobs": 5,
 	}
 
-	b, _ := json.Marshal(payload)
-	req, _ := http.NewRequestWithContext(ctx, "POST", o.BaseURL+"/chat/completions", bytes.NewReader(b))
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return "", 0.0, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", o.BaseURL+"/chat/completions", bytes.NewReader(b))
+	if err != nil {
+		return "", 0.0, fmt.Errorf("failed to create request: %w", err)
+	}
+
 	req.Header.Set("Authorization", "Bearer "+o.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -387,4 +391,3 @@ func (o *OpenAIBackend) EvaluateNLI(ctx context.Context, contextText string, cla
 	}
 	return "Neutral", prob, nil
 }
-
