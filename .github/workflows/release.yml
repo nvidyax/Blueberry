@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     name: Build & Release
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     strategy:
       matrix:
         goos: [linux, windows, darwin]
@@ -35,15 +35,33 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           mkdir -p build
-          BINARY_NAME=blueberry-${{ matrix.goos }}-${{ matrix.goarch }}
+          
+          # Use macOS instead of Darwin for user clarity
+          OUT_OS="${{ matrix.goos }}"
+          if [ "$OUT_OS" = "darwin" ]; then
+            OUT_OS="macos"
+          fi
+          
+          BINARY_NAME=blueberry-${OUT_OS}-${{ matrix.goarch }}
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BINARY_NAME=${BINARY_NAME}.exe
           fi
+          
           go build -o build/$BINARY_NAME ./cmd/blueberry
+
+          # Generate Mac .pkg installer natively
+          if [ "${{ matrix.goos }}" = "darwin" ]; then
+            mkdir -p pkg_root/usr/local/bin
+            cp build/$BINARY_NAME pkg_root/usr/local/bin/blueberry
+            chmod +x pkg_root/usr/local/bin/blueberry
+            pkgbuild --identifier com.blueberry.mcp --root pkg_root --install-location / build/Blueberry-MacOS-${{ matrix.goarch }}-Installer.pkg
+          fi
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
         with:
-          files: build/blueberry-*
+          files: |
+            build/blueberry-*
+            build/*.pkg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
