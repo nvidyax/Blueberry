@@ -1,5 +1,9 @@
 # Blueberry MCP Server
 
+<p align="center">
+  <img src="assets/blueberry-logo.png" alt="Blueberry Admiral Mascot" width="250" />
+</p>
+
 Blueberry is an evidence-first [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server built in Go. It acts as an inline skill/tool that evaluates context and prompts to determine if there's a way to reduce hallucinations at runtime, pre-generation.
 
 By establishing a robust local storage layer and a structured reasoning workflow, Blueberry evaluates claims against concrete evidence ("Spans") to measure confidence and calculate trackable "information budgets."
