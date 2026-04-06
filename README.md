@@ -77,12 +77,37 @@ You can define which foundational model verifies your AI's tracing logs by setti
 - `add_attempt`: Formulate and queue an LLM conclusion claim into the timeline securely without verifying yet.
 - `detect_hallucination`: Pass a specified claim answer against the trace timeline. Extracts spans out of the active store, passes them strictly into the defined `Verifier Engine`, returning hallucination status and specific probability tolerances!
 
-## Getting Started
+## Installation & Usage (Universal IDE Support)
 
-To run the server instance locally over `stdio`:
+Blueberry is an open-standard MCP server. You can install it on **Cursor, VS Code, Zed, Antigravity**, or any other MCP-compatible IDE without needing language-specific plugins.
+
+### 1. Download the Executable
+Download the pre-compiled binary for your operating system (Windows, macOS, Linux) from the [GitHub Releases](https://github.com/vidyabodepudi/Blueberry/releases) page.
+
+### 2. Configure Your IDE
+Open your IDE's MCP settings (e.g., `mcp.json` in VS Code/Cursor conventions) and add Blueberry. You can specify your preferred LLM provider here using `BERRY_VERIFIER_BACKEND` (`openai`, `anthropic`, `gemini`, `azure`, `bedrock`, or `vertex`) and passing the respective API key:
+
+```json
+{
+  "mcpServers": {
+    "blueberry": {
+      "command": "/absolute/path/to/downloaded/blueberry",
+      "args": ["-transport", "stdio"],
+      "env": {
+        "BERRY_VERIFIER_BACKEND": "openai",
+        "OPENAI_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+### 3. Install the Agent Skill (Optional)
+To enable the elegant `/blueberry evaluate` slash command formatting directly in your AI chat view, copy the contents of [`.agents/skills/blueberry.md`](.agents/skills/blueberry.md) into your IDE's Custom Instructions, System Rules, or standard agent skills directory.
+
+### Quick Local Dev
+To run the server instance locally from source over `stdio`:
 
 ```bash
 go run ./cmd/blueberry/main.go -transport stdio
 ```
-
-_Beep Boop_
