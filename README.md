@@ -53,7 +53,7 @@ You can define which foundational model verifies your AI's tracing logs by setti
 
 3. **Google Gemini** (`BERRY_VERIFIER_BACKEND=gemini`)
    - Uses strict bounding parameters via Google Generative REST framework.
-   - Env Defaults: Uses `GEMINI_API_KEY`, default model `gemini-1.5-flash`.
+   - Env Defaults: Uses `GEMINI_API_KEY`, default model `gemini-3-flash-preview`.
 
 4. **AWS Bedrock** (`BERRY_VERIFIER_BACKEND=bedrock`)
    - Uses AWS SDK v2 orchestration with SigV4 API compliance handling for enterprise clouds.
@@ -65,7 +65,7 @@ You can define which foundational model verifies your AI's tracing logs by setti
 
 6. **Google Vertex AI** (`BERRY_VERIFIER_BACKEND=vertex`)
    - Enterprise equivalent to Google Gemini utilizing Google Cloud's official `genai` SDK and service-account OAuth handshakes.
-   - Env Defaults: `VERTEX_PROJECT_ID`, default location `us-central1`, default model `gemini-1.5-flash-001`.
+   - Env Defaults: `VERTEX_PROJECT_ID`, default location `us-central1`, default model `gemini-3-flash-preview`.
 
 ## Available Tools
 

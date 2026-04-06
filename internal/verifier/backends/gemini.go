@@ -22,7 +22,7 @@ type GeminiBackend struct {
 
 func NewGeminiBackend(model string) *GeminiBackend {
 	if model == "" {
-		model = "gemini-1.5-flash"
+		model = "gemini-3-flash-preview"
 	}
 	baseURL := os.Getenv("GEMINI_BASE_URL")
 	if baseURL == "" {

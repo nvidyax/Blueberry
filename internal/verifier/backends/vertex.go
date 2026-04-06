@@ -20,7 +20,7 @@ type VertexBackend struct {
 
 func NewVertexBackend(model string) (*VertexBackend, error) {
 	if model == "" {
-		model = "gemini-1.5-flash-001"
+		model = "gemini-3-flash-preview"
 	}
 
 	projectID := os.Getenv("VERTEX_PROJECT_ID")
