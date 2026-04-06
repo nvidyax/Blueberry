@@ -111,3 +111,5 @@ To run the server instance locally from source over `stdio`:
 ```bash
 go run ./cmd/blueberry/main.go -transport stdio
 ```
+### Ode to the Admiral
+*Blueberry is named after my friends child. In a world that is constantly changing and evolving at the speed of thought, we need a way to verify and build trust in the inputs we as hoomans receive to interact with the world. Much like as a growing tiny baby needs their parents to show them the way.*
